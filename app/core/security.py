@@ -35,10 +35,15 @@ async def get_current_user(
 ) -> CurrentUser:
     payload = decode_jwt_token(credentials.credentials)
     try:
+        username = payload["username"]
+        role = payload.get("role", "user")
+        # Se il token non ha role ma l'utente è l'admin configurato, assegna admin
+        if role != "admin" and username == settings.ADMIN_USERNAME:
+            role = "admin"
         return CurrentUser(
             user_id=uuid.UUID(payload["sub"]),
-            username=payload["username"],
-            role=payload.get("role", "user"),
+            username=username,
+            role=role,
         )
     except (KeyError, ValueError):
         raise HTTPException(
