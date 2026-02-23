@@ -1,3 +1,4 @@
+import logging
 import uuid
 from contextlib import asynccontextmanager
 
@@ -10,12 +11,18 @@ from app.db.session import async_session_factory, engine
 from app.services.gateway_client import close_gateway_client
 from app.services.group_service import get_or_create_default_group
 
+logger = logging.getLogger(__name__)
+
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    admin_user_id = uuid.uuid5(uuid.NAMESPACE_DNS, settings.ADMIN_USERNAME)
-    async with async_session_factory() as db:
-        await get_or_create_default_group(db, admin_user_id)
+    try:
+        admin_user_id = uuid.uuid5(uuid.NAMESPACE_DNS, settings.ADMIN_USERNAME)
+        async with async_session_factory() as db:
+            await get_or_create_default_group(db, admin_user_id)
+        logger.info("Default group initialized successfully")
+    except Exception as e:
+        logger.error(f"Failed to initialize default group on startup: {e}")
 
     yield
 
