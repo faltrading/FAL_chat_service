@@ -2,11 +2,13 @@ import uuid
 from datetime import datetime
 
 from fastapi import APIRouter, Depends, Query
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.exceptions import NotAMemberError
 from app.core.security import get_current_user
 from app.db.session import get_db
+from app.models.message import Message
 from app.schemas.auth import CurrentUser
 from app.schemas.messages import (
     MessageCreate,
@@ -59,8 +61,29 @@ async def list_messages(
     messages, has_more = await message_service.get_messages(db, group_id, limit, before)
     next_cursor = messages[0].created_at.isoformat() if has_more and messages else None
 
+    # Build map for reply resolution
+    msg_map: dict[str, Message] = {str(m.id): m for m in messages}
+    missing_ids = [
+        m.reply_to_id for m in messages
+        if m.reply_to_id and str(m.reply_to_id) not in msg_map
+    ]
+    if missing_ids:
+        result = await db.execute(select(Message).where(Message.id.in_(missing_ids)))
+        for rm in result.scalars():
+            msg_map[str(rm.id)] = rm
+
+    enriched = []
+    for m in messages:
+        resp = MessageResponse.model_validate(m)
+        if m.reply_to_id:
+            parent = msg_map.get(str(m.reply_to_id))
+            if parent:
+                resp.reply_to_content = parent.content if not parent.is_deleted else "[Messaggio eliminato]"
+                resp.reply_to_username = parent.sender_username
+        enriched.append(resp)
+
     return MessageListResponse(
-        messages=[MessageResponse.model_validate(m) for m in messages],
+        messages=enriched,
         has_more=has_more,
         next_cursor=next_cursor,
     )

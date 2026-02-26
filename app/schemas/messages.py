@@ -23,6 +23,8 @@ class MessageResponse(BaseModel):
     content: str
     message_type: str
     reply_to_id: uuid.UUID | None
+    reply_to_content: str | None = None
+    reply_to_username: str | None = None
     metadata: dict = Field(default_factory=dict, validation_alias="extra_data")
     is_edited: bool
     edited_at: datetime | None

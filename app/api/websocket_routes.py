@@ -123,15 +123,29 @@ async def websocket_chat(websocket: WebSocket, group_id: uuid.UUID):
 
                 async with async_session_factory() as db:
                     try:
+                        reply_to_uuid = uuid.UUID(data["reply_to_id"]) if data.get("reply_to_id") else None
                         msg = await message_service.send_message(
                             db,
                             group_id=group_id,
                             user=user,
                             content=content,
                             message_type=data.get("message_type", "text"),
-                            reply_to_id=uuid.UUID(data["reply_to_id"]) if data.get("reply_to_id") else None,
+                            reply_to_id=reply_to_uuid,
                             metadata=data.get("metadata", {}),
                         )
+
+                        reply_to_content = None
+                        reply_to_username = None
+                        if reply_to_uuid is not None:
+                            from app.models.message import Message as MsgModel
+                            rr = await db.execute(
+                                select(MsgModel).where(MsgModel.id == reply_to_uuid)
+                            )
+                            reply_msg = rr.scalar_one_or_none()
+                            if reply_msg:
+                                reply_to_content = reply_msg.content if not reply_msg.is_deleted else "[Messaggio eliminato]"
+                                reply_to_username = reply_msg.sender_username
+
                         msg_data = {
                             "id": str(msg.id),
                             "group_id": str(msg.group_id),
@@ -140,6 +154,8 @@ async def websocket_chat(websocket: WebSocket, group_id: uuid.UUID):
                             "content": msg.content,
                             "message_type": msg.message_type,
                             "reply_to_id": str(msg.reply_to_id) if msg.reply_to_id else None,
+                            "reply_to_content": reply_to_content,
+                            "reply_to_username": reply_to_username,
                             "metadata": msg.extra_data,
                             "is_edited": msg.is_edited,
                             "edited_at": msg.edited_at.isoformat() if msg.edited_at else None,
@@ -197,7 +213,12 @@ async def websocket_chat(websocket: WebSocket, group_id: uuid.UUID):
                         await message_service.delete_message(db, uuid.UUID(message_id), user)
                         await _broadcast_to_group_ws(
                             group_id, "message_deleted",
-                            {"id": message_id, "deleted_by": user.username},
+                            {
+                                "id": message_id,
+                                "is_deleted": True,
+                                "content": "[Messaggio eliminato]",
+                                "deleted_by": user.username,
+                            },
                         )
                     except Exception as e:
                         await websocket.send_text(json.dumps({
