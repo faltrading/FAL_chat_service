@@ -30,7 +30,11 @@ async def create_group(
     admin_user: CurrentUser = Depends(require_admin),
     db: AsyncSession = Depends(get_db),
 ):
-    group = await group_service.create_group(db, admin_user, body.name, body.description)
+    group = await group_service.create_group(
+        db, admin_user, body.name, body.description,
+        is_public=body.is_public,
+        invited_user_ids=body.invited_user_ids if not body.is_public else None,
+    )
     members = await group_service.get_group_members(db, group.id)
     return GroupResponse(
         id=group.id,
@@ -190,3 +194,26 @@ async def leave_group(
     db: AsyncSession = Depends(get_db),
 ):
     await group_service.leave_group(db, group_id, current_user)
+
+
+@router.post("/{group_id}/join", response_model=GroupResponse)
+async def join_group_directly(
+    group_id: uuid.UUID,
+    current_user: CurrentUser = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Join a public group directly by group ID."""
+    group = await group_service.join_public_group(db, group_id, current_user)
+    members = await group_service.get_group_members(db, group.id)
+    return GroupResponse(
+        id=group.id,
+        name=group.name,
+        description=group.description,
+        is_default=group.is_default,
+        is_public=group.is_public,
+        invite_code=group.invite_code if current_user.is_admin else None,
+        created_by=group.created_by,
+        member_count=len(members),
+        created_at=group.created_at,
+        updated_at=group.updated_at,
+    )

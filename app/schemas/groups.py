@@ -7,6 +7,8 @@ from pydantic import BaseModel, Field
 class GroupCreate(BaseModel):
     name: str = Field(..., min_length=1, max_length=255)
     description: str = Field(default="", max_length=2000)
+    is_public: bool = False
+    invited_user_ids: list[uuid.UUID] = Field(default_factory=list)
 
 
 class GroupUpdate(BaseModel):

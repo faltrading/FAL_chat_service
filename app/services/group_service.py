@@ -17,6 +17,7 @@ from app.core.exceptions import (
 )
 from app.models.chat_group import ChatGroup
 from app.models.group_member import GroupMember
+from app.models.message import Message
 from app.schemas.auth import CurrentUser
 from app.services.message_service import create_system_message
 from app.services.realtime import realtime_service
@@ -101,13 +102,20 @@ async def ensure_user_in_default_group(db: AsyncSession, user: CurrentUser) -> b
         raise
 
 
-async def create_group(db: AsyncSession, admin_user: CurrentUser, name: str, description: str) -> ChatGroup:
+async def create_group(
+    db: AsyncSession,
+    admin_user: CurrentUser,
+    name: str,
+    description: str,
+    is_public: bool = False,
+    invited_user_ids: list[uuid.UUID] | None = None,
+) -> ChatGroup:
     try:
         group = ChatGroup(
             name=name,
             description=description,
             is_default=False,
-            is_public=False,
+            is_public=is_public,
             invite_code=generate_invite_code(),
             created_by=admin_user.user_id,
         )
@@ -123,6 +131,43 @@ async def create_group(db: AsyncSession, admin_user: CurrentUser, name: str, des
         db.add(admin_member)
         await db.flush()
 
+        # For private groups, add invited users as members
+        invited_usernames: list[str] = []
+        if not is_public and invited_user_ids:
+            for uid in invited_user_ids:
+                if uid == admin_user.user_id:
+                    continue
+                # Lookup username from existing group_members or users table
+                existing = await db.execute(
+                    select(GroupMember).where(
+                        GroupMember.group_id == group.id,
+                        GroupMember.user_id == uid,
+                    )
+                )
+                if existing.scalar_one_or_none() is not None:
+                    continue
+
+                # Try to get username from default group membership
+                default_result = await db.execute(
+                    select(GroupMember.username).join(ChatGroup).where(
+                        ChatGroup.is_default.is_(True),
+                        GroupMember.user_id == uid,
+                    )
+                )
+                uname_row = default_result.scalar_one_or_none()
+                uname = uname_row if uname_row else "Utente"
+
+                new_member = GroupMember(
+                    group_id=group.id,
+                    user_id=uid,
+                    username=uname,
+                    role="member",
+                )
+                db.add(new_member)
+                invited_usernames.append(uname)
+
+            await db.flush()
+
         await create_system_message(
             db,
             group_id=group.id,
@@ -130,12 +175,82 @@ async def create_group(db: AsyncSession, admin_user: CurrentUser, name: str, des
         )
         await db.commit()
         await db.refresh(group)
+
+        # Send announcement to default public chat
+        await _send_group_announcement(
+            db, group, admin_user, is_public, invited_user_ids or [],
+        )
+
         return group
     except Exception as e:
         await db.rollback()
         if "disk" in str(e).lower() or "storage" in str(e).lower():
             raise StorageLimitError()
         raise
+
+
+async def _send_group_announcement(
+    db: AsyncSession,
+    group: ChatGroup,
+    admin_user: CurrentUser,
+    is_public: bool,
+    invited_user_ids: list[uuid.UUID],
+) -> None:
+    """Send an announcement message to the default public group about a new group."""
+    try:
+        result = await db.execute(select(ChatGroup).where(ChatGroup.is_default.is_(True)))
+        default_group = result.scalar_one_or_none()
+        if default_group is None:
+            return
+
+        if is_public:
+            content = f"🎉 Nuova chat pubblica disponibile: \"{group.name}\""
+        else:
+            content = f"🔒 Nuova chat privata creata: \"{group.name}\""
+
+        metadata = {
+            "group_invite": True,
+            "target_group_id": str(group.id),
+            "target_group_name": group.name,
+            "target_group_description": group.description or "",
+            "is_public": is_public,
+            "invited_user_ids": [str(uid) for uid in invited_user_ids],
+            "invite_code": group.invite_code,
+        }
+
+        msg = Message(
+            group_id=default_group.id,
+            sender_id=admin_user.user_id,
+            sender_username=admin_user.username,
+            content=content,
+            message_type="announcement",
+            extra_data=metadata,
+        )
+        db.add(msg)
+        await db.commit()
+        await db.refresh(msg)
+
+        from app.api.websocket_routes import _broadcast_to_group_ws
+        msg_data = {
+            "id": str(msg.id),
+            "group_id": str(msg.group_id),
+            "sender_id": str(msg.sender_id),
+            "sender_username": msg.sender_username,
+            "content": msg.content,
+            "message_type": msg.message_type,
+            "reply_to_id": None,
+            "reply_to_content": None,
+            "reply_to_username": None,
+            "metadata": msg.extra_data,
+            "is_edited": msg.is_edited,
+            "edited_at": None,
+            "is_deleted": msg.is_deleted,
+            "created_at": msg.created_at.isoformat(),
+            "updated_at": msg.updated_at.isoformat() if msg.updated_at else msg.created_at.isoformat(),
+        }
+        await _broadcast_to_group_ws(default_group.id, "new_message", msg_data)
+    except Exception:
+        pass  # Non-critical, don't break group creation
 
 
 async def get_group(db: AsyncSession, group_id: uuid.UUID) -> ChatGroup:
@@ -401,6 +516,56 @@ async def leave_group(db: AsyncSession, group_id: uuid.UUID, user: CurrentUser) 
         group_id,
         {"user_id": user.user_id, "username": user.username, "group_id": group_id},
     )
+
+
+async def join_public_group(db: AsyncSession, group_id: uuid.UUID, user: CurrentUser) -> ChatGroup:
+    """Join a public group directly by ID."""
+    group = await get_group(db, group_id)
+
+    if not group.is_public:
+        raise ChatServiceError(
+            detail="Questo gruppo non è pubblico",
+            status_code=403,
+        )
+
+    member_result = await db.execute(
+        select(GroupMember).where(
+            GroupMember.group_id == group.id,
+            GroupMember.user_id == user.user_id,
+        )
+    )
+    if member_result.scalar_one_or_none() is not None:
+        raise AlreadyMemberError()
+
+    try:
+        new_member = GroupMember(
+            group_id=group.id,
+            user_id=user.user_id,
+            username=user.username,
+            role="member",
+        )
+        db.add(new_member)
+        await db.flush()
+
+        await create_system_message(
+            db,
+            group_id=group.id,
+            content=f"{user.username} si è unito al gruppo",
+        )
+        await db.commit()
+
+        await realtime_service.broadcast_user_joined(
+            group.id,
+            {"user_id": user.user_id, "username": user.username, "group_id": group.id},
+        )
+        return group
+    except AlreadyMemberError:
+        raise
+    except Exception as e:
+        await db.rollback()
+        if "disk" in str(e).lower() or "storage" in str(e).lower():
+            raise StorageLimitError()
+        raise
 
 
 from app.core.exceptions import ChatServiceError
