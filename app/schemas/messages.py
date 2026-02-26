@@ -29,6 +29,9 @@ class MessageResponse(BaseModel):
     is_edited: bool
     edited_at: datetime | None
     is_deleted: bool
+    is_pinned: bool = False
+    pinned_at: datetime | None = None
+    pinned_by: str | None = None
     created_at: datetime
     updated_at: datetime
 

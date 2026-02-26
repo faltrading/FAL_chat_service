@@ -110,6 +110,21 @@ async def unread_count(
     return {"unread_count": count}
 
 
+@router.get("/pinned", response_model=list[MessageResponse])
+async def get_pinned_messages(
+    group_id: uuid.UUID,
+    current_user: CurrentUser = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    await group_service.ensure_user_in_default_group(db, current_user)
+    if not current_user.is_admin:
+        is_member = await group_service.check_membership(db, group_id, current_user.user_id)
+        if not is_member:
+            raise NotAMemberError()
+    messages = await message_service.get_pinned_messages(db, group_id)
+    return [MessageResponse.model_validate(m) for m in messages]
+
+
 @router.get("/{message_id}", response_model=MessageResponse)
 async def get_message(
     group_id: uuid.UUID,
@@ -146,3 +161,14 @@ async def delete_message(
     db: AsyncSession = Depends(get_db),
 ):
     await message_service.delete_message(db, message_id, current_user)
+
+
+@router.post("/{message_id}/pin", response_model=MessageResponse)
+async def toggle_pin_message(
+    group_id: uuid.UUID,
+    message_id: uuid.UUID,
+    current_user: CurrentUser = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    msg = await message_service.toggle_pin_message(db, message_id, group_id, current_user)
+    return MessageResponse.model_validate(msg)

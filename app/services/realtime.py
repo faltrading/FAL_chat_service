@@ -72,6 +72,9 @@ class RealtimeService:
     async def broadcast_system_message(self, group_id: uuid.UUID, message_data: dict):
         await self.broadcast_to_group(group_id, "system_message", message_data)
 
+    async def broadcast_message_pinned(self, group_id: uuid.UUID, message_data: dict):
+        await self.broadcast_to_group(group_id, "message_pinned", message_data)
+
     async def broadcast_typing(self, group_id: uuid.UUID, user_data: dict):
         await self.broadcast_to_group(group_id, "typing", user_data)
 

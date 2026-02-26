@@ -227,6 +227,33 @@ async def websocket_chat(websocket: WebSocket, group_id: uuid.UUID):
                             "timestamp": datetime.now(timezone.utc).isoformat(),
                         }))
 
+            elif action == "pin_message":
+                message_id = data.get("message_id")
+                if not message_id:
+                    continue
+
+                async with async_session_factory() as db:
+                    try:
+                        msg = await message_service.toggle_pin_message(
+                            db, uuid.UUID(message_id), group_id, user,
+                        )
+                        await _broadcast_to_group_ws(
+                            group_id, "message_pinned",
+                            {
+                                "id": str(msg.id),
+                                "group_id": str(msg.group_id),
+                                "is_pinned": msg.is_pinned,
+                                "pinned_at": msg.pinned_at.isoformat() if msg.pinned_at else None,
+                                "pinned_by": msg.pinned_by,
+                            },
+                        )
+                    except Exception as e:
+                        await websocket.send_text(json.dumps({
+                            "type": "error",
+                            "data": {"message": str(e)},
+                            "timestamp": datetime.now(timezone.utc).isoformat(),
+                        }))
+
     except WebSocketDisconnect:
         pass
     except Exception:

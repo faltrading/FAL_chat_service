@@ -30,6 +30,9 @@ def _message_to_dict(msg: Message) -> dict:
         "is_edited": msg.is_edited,
         "edited_at": msg.edited_at,
         "is_deleted": msg.is_deleted,
+        "is_pinned": msg.is_pinned,
+        "pinned_at": msg.pinned_at,
+        "pinned_by": msg.pinned_by,
         "created_at": msg.created_at,
         "updated_at": msg.updated_at,
     }
@@ -252,3 +255,63 @@ async def get_unread_count(
         )
     )
     return result.scalar() or 0
+
+
+async def toggle_pin_message(
+    db: AsyncSession,
+    message_id: uuid.UUID,
+    group_id: uuid.UUID,
+    user: CurrentUser,
+) -> Message:
+    """Pin or unpin a message. Any group member can pin/unpin."""
+    membership = await db.execute(
+        select(GroupMember).where(
+            GroupMember.group_id == group_id,
+            GroupMember.user_id == user.user_id,
+        )
+    )
+    if membership.scalar_one_or_none() is None:
+        raise NotAMemberError()
+
+    result = await db.execute(
+        select(Message).where(Message.id == message_id, Message.group_id == group_id)
+    )
+    msg = result.scalar_one_or_none()
+    if msg is None:
+        raise MessageNotFoundError()
+    if msg.is_deleted:
+        raise MessageNotFoundError()
+
+    new_pinned = not msg.is_pinned
+    msg.is_pinned = new_pinned
+    msg.pinned_at = datetime.now(timezone.utc) if new_pinned else None
+    msg.pinned_by = user.username if new_pinned else None
+    msg.updated_at = datetime.now(timezone.utc)
+    await db.commit()
+    await db.refresh(msg)
+
+    await realtime_service.broadcast_message_pinned(
+        group_id,
+        {
+            "id": msg.id,
+            "group_id": msg.group_id,
+            "is_pinned": msg.is_pinned,
+            "pinned_at": msg.pinned_at,
+            "pinned_by": msg.pinned_by,
+        },
+    )
+    return msg
+
+
+async def get_pinned_messages(
+    db: AsyncSession,
+    group_id: uuid.UUID,
+) -> list[Message]:
+    result = await db.execute(
+        select(Message).where(
+            Message.group_id == group_id,
+            Message.is_pinned.is_(True),
+            Message.is_deleted.is_(False),
+        ).order_by(Message.pinned_at.desc())
+    )
+    return list(result.scalars().all())
