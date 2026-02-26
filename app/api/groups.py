@@ -1,6 +1,7 @@
 import uuid
 
 from fastapi import APIRouter, Depends
+from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.security import get_current_user, require_admin
@@ -16,6 +17,11 @@ from app.schemas.groups import (
 from app.services import group_service
 
 router = APIRouter(prefix="/api/v1/chat/groups", tags=["groups"])
+
+
+class AddMemberRequest(BaseModel):
+    user_id: uuid.UUID
+    username: str
 
 
 @router.post("", response_model=GroupResponse, status_code=201)
@@ -156,6 +162,25 @@ async def remove_member(
     db: AsyncSession = Depends(get_db),
 ):
     await group_service.remove_member(db, group_id, user_id, admin_user)
+
+
+@router.post("/{group_id}/members", response_model=GroupMemberResponse, status_code=201)
+async def add_member(
+    group_id: uuid.UUID,
+    body: AddMemberRequest,
+    admin_user: CurrentUser = Depends(require_admin),
+    db: AsyncSession = Depends(get_db),
+):
+    member = await group_service.add_member_by_admin(
+        db, group_id, body.user_id, body.username, admin_user
+    )
+    return GroupMemberResponse(
+        id=member.id,
+        user_id=member.user_id,
+        username=member.username,
+        role=member.role,
+        joined_at=member.joined_at,
+    )
 
 
 @router.post("/{group_id}/leave", status_code=204)

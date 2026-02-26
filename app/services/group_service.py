@@ -272,6 +272,56 @@ async def join_group_by_invite(db: AsyncSession, invite_code: str, user: Current
         raise
 
 
+async def add_member_by_admin(
+    db: AsyncSession,
+    group_id: uuid.UUID,
+    user_id: uuid.UUID,
+    username: str,
+    admin_user: CurrentUser,
+) -> GroupMember:
+    group = await get_group(db, group_id)
+
+    member_result = await db.execute(
+        select(GroupMember).where(
+            GroupMember.group_id == group_id,
+            GroupMember.user_id == user_id,
+        )
+    )
+    if member_result.scalar_one_or_none() is not None:
+        raise AlreadyMemberError()
+
+    try:
+        new_member = GroupMember(
+            group_id=group_id,
+            user_id=user_id,
+            username=username,
+            role="member",
+        )
+        db.add(new_member)
+        await db.flush()
+
+        await create_system_message(
+            db,
+            group_id=group_id,
+            content=f"{username} è stato aggiunto al gruppo da {admin_user.username}",
+        )
+        await db.commit()
+        await db.refresh(new_member)
+
+        await realtime_service.broadcast_user_joined(
+            group_id,
+            {"user_id": str(user_id), "username": username, "group_id": str(group_id)},
+        )
+        return new_member
+    except AlreadyMemberError:
+        raise
+    except Exception as e:
+        await db.rollback()
+        if "disk" in str(e).lower() or "storage" in str(e).lower():
+            raise StorageLimitError()
+        raise
+
+
 async def get_group_members(db: AsyncSession, group_id: uuid.UUID) -> list[GroupMember]:
     result = await db.execute(
         select(GroupMember).where(GroupMember.group_id == group_id).order_by(GroupMember.joined_at)
