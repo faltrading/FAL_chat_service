@@ -15,7 +15,7 @@ from app.schemas.groups import (
 )
 from app.services import group_service
 
-router = APIRouter(prefix="/api/v1/groups", tags=["groups"])
+router = APIRouter(prefix="/api/v1/chat/groups", tags=["groups"])
 
 
 @router.post("", response_model=GroupResponse, status_code=201)

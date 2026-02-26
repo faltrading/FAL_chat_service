@@ -18,7 +18,7 @@ from app.schemas.messages import (
 )
 from app.services import group_service, message_service
 
-router = APIRouter(prefix="/api/v1/groups/{group_id}/messages", tags=["messages"])
+router = APIRouter(prefix="/api/v1/chat/groups/{group_id}/messages", tags=["messages"])
 
 
 @router.post("", response_model=MessageResponse, status_code=201)
