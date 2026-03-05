@@ -42,7 +42,7 @@ async def upload_media(
         client.storage.from_(BUCKET).upload(
             path=path,
             file=data,
-            file_options={"content-type": mime_type, "upsert": "false"},
+            file_options={"content-type": mime_type, "upsert": False},
         )
     except Exception as exc:
         err_str = str(exc).lower()
