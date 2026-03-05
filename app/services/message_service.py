@@ -110,12 +110,21 @@ async def send_message(
                 "Triggering push notification for chat message in group %s by %s",
                 group_id, user.username,
             )
+            # Build a human-readable preview based on message type
+            _type_labels = {
+                "image": "📷 Foto",
+                "audio": "🎤 Messaggio vocale",
+                "video": "🎥 Video",
+                "file": "📎 File",
+            }
+            preview = _type_labels.get(message_type, content[:100] if content else "")
+
             await notification_service.notify_chat_message(
                 group_id=str(group_id),
                 group_name=group_obj.name if group_obj else "Chat",
                 sender_id=str(user.user_id),
                 sender_username=user.username,
-                message_preview=content[:100] if content else "",
+                message_preview=preview,
             )
         except Exception as exc:
             import logging
