@@ -13,7 +13,7 @@ logging.basicConfig(
     stream=sys.stdout,
 )
 
-from app.api import groups, health, invites, messages, websocket_routes
+from app.api import groups, health, invites, media, messages, websocket_routes
 from app.core.config import settings
 from app.db.session import async_session_factory, engine
 from app.services.gateway_client import close_gateway_client
@@ -60,5 +60,6 @@ app.add_middleware(
 app.include_router(health.router)
 app.include_router(groups.router)
 app.include_router(messages.router)
+app.include_router(media.router)
 app.include_router(invites.router)
 app.include_router(websocket_routes.router)
