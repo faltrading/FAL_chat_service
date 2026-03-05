@@ -10,11 +10,13 @@ from app.core.exceptions import (
     NotAMemberError,
     StorageLimitError,
 )
+from app.models.chat_group import ChatGroup
 from app.models.group_member import GroupMember
 from app.models.message import Message
 from app.models.message_read_status import MessageReadStatus
 from app.schemas.auth import CurrentUser
 from app.services.realtime import realtime_service
+from app.services import notification_service
 
 
 def _message_to_dict(msg: Message) -> dict:
@@ -96,6 +98,23 @@ async def send_message(
         await db.refresh(msg)
 
         await realtime_service.broadcast_new_message(group_id, _message_to_dict(msg))
+
+        # Fire-and-forget push notification (never blocks the response)
+        try:
+            group_result = await db.execute(
+                select(ChatGroup).where(ChatGroup.id == group_id)
+            )
+            group_obj = group_result.scalar_one_or_none()
+            await notification_service.notify_chat_message(
+                group_id=str(group_id),
+                group_name=group_obj.name if group_obj else "Chat",
+                sender_id=str(user.user_id),
+                sender_username=user.username,
+                message_preview=content[:100] if content else "",
+            )
+        except Exception:
+            pass  # notification failure must never affect chat
+
         return msg
     except Exception as e:
         await db.rollback()
