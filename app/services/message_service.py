@@ -105,6 +105,11 @@ async def send_message(
                 select(ChatGroup).where(ChatGroup.id == group_id)
             )
             group_obj = group_result.scalar_one_or_none()
+            import logging
+            logging.getLogger(__name__).info(
+                "Triggering push notification for chat message in group %s by %s",
+                group_id, user.username,
+            )
             await notification_service.notify_chat_message(
                 group_id=str(group_id),
                 group_name=group_obj.name if group_obj else "Chat",
@@ -112,8 +117,11 @@ async def send_message(
                 sender_username=user.username,
                 message_preview=content[:100] if content else "",
             )
-        except Exception:
-            pass  # notification failure must never affect chat
+        except Exception as exc:
+            import logging
+            logging.getLogger(__name__).warning(
+                "Push notification trigger failed: %s", exc
+            )
 
         return msg
     except Exception as e:

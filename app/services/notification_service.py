@@ -23,6 +23,7 @@ _TIMEOUT = 10.0  # seconds
 def _edge_url() -> str | None:
     base = getattr(settings, "SUPABASE_PROJECT_URL", None)
     if not base:
+        logger.warning("SUPABASE_PROJECT_URL not set — skipping push notification")
         return None
     return base.rstrip("/") + _EDGE_FUNCTION_PATH
 
@@ -35,13 +36,14 @@ async def send_notification(payload: dict[str, Any]) -> None:
     """
     url = _edge_url()
     if not url:
-        logger.debug("SUPABASE_PROJECT_URL not set — skipping push notification")
         return
 
     key = getattr(settings, "SUPABASE_SERVICE_ROLE_KEY", None)
     if not key:
-        logger.debug("SUPABASE_SERVICE_ROLE_KEY not set — skipping push notification")
+        logger.warning("SUPABASE_SERVICE_ROLE_KEY not set — skipping push notification")
         return
+
+    logger.info("Sending push notification to %s — type=%s", url, payload.get("type"))
 
     try:
         async with httpx.AsyncClient(timeout=_TIMEOUT) as client:
@@ -59,6 +61,8 @@ async def send_notification(payload: dict[str, Any]) -> None:
                     resp.status_code,
                     resp.text[:200],
                 )
+            else:
+                logger.info("Push notification sent successfully: %s", resp.text[:200])
     except httpx.TimeoutException:
         logger.warning("Push notification request timed out")
     except Exception:
